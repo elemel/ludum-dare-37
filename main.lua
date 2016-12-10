@@ -1,3 +1,16 @@
+function mix(x1, x2, t)
+    return (1 - t) * x1 + t * x2
+end
+
+function clamp(x, x1, x2)
+    return math.min(math.max(x, x1), x2)
+end
+
+function smoothstep(x1, x2, x)
+    local t = clamp((x - x1) / (x2 - x1), 0, 1) 
+    return t * t * (3 - 2 * t)
+end
+
 function newGame(config)
     local game = {}
     game.aspectRatio = config.aspectRatio or 16 / 9
@@ -19,45 +32,50 @@ end
 function newBarricade(window, config)
     local barricade = {}
     barricade.type = "barricade"
+    barricade.active = true
     barricade.window = window
     barricade.window.barricade = barricade
+    barricade.window.state = "barricaded"
     barricade.x = barricade.window.x
     barricade.y = barricade.window.y
     barricade.z = barricade.window.z
     barricade.imageName = barricade.window.barricadeImageName
+    barricade.destructionTime = 30 * love.math.random()
     table.insert(game.entities, barricade)
     return barricade
 end
 
-function newFireplace(game, config)
-    local fireplace = {}
-    fireplace.type = "fireplace"
-    fireplace.x = config.x or 0
-    fireplace.y = config.y or 0
-    fireplace.z = config.z or 0
+function newFire(game, config)
+    local fire = {}
+    fire.type = "fire"
+    fire.active = true
+    fire.x = config.x or 0
+    fire.y = config.y or 0
+    fire.z = config.z or 0
 
-    fireplace.particles =
+    fire.particles =
         love.graphics.newParticleSystem(game.images.fireParticle, 256)
 
-    fireplace.particles:setParticleLifetime(0.25, 0.5)
-    fireplace.particles:setEmissionRate(256)
-    fireplace.particles:setSizes(game.imageScale)
-    fireplace.particles:setAreaSpread("normal", 1 / 4, 1 / 8)
-    fireplace.particles:setLinearAcceleration(0, -8)
-    fireplace.particles:setLinearDamping(2)
+    fire.particles:setParticleLifetime(0.25, 0.75)
+    fire.particles:setEmissionRate(512)
+    fire.particles:setSizes(game.imageScale)
+    fire.particles:setAreaSpread("normal", 1 / 4, 1 / 8)
+    fire.particles:setLinearAcceleration(0, -8)
+    fire.particles:setLinearDamping(2)
 
-    fireplace.particles:setColors(
+    fire.particles:setColors(
         255, 127, 63, 255,
         127, 63, 0, 255,
         63, 0, 0, 255)
 
-    table.insert(game.entities, fireplace)
-    return fireplace
+    table.insert(game.entities, fire)
+    return fire
 end
 
 function newSurvivor(game, config)
     local survivor = {}
     survivor.type = "survivor"
+    survivor.active = true
     survivor.x = config.x or 0
     survivor.y = config.y or 0
     survivor.z = config.z or 0
@@ -75,9 +93,31 @@ function newSurvivor(game, config)
     return survivor
 end
 
+function newWindow(game, config)
+    local window = {}
+    window.type = "window"
+    window.active = true
+    window.state = config.state or "producing"
+    window.x = config.x or 0
+    window.y = config.y or 0
+    window.z = config.z or 0
+    window.rallyingX = config.rallyingX or 0
+    window.rallyingY = config.rallyingY or 0
+    window.rallyingZ = config.rallyingZ or 0
+    window.productionTime = config.productionTime or 1
+    window.currentProductionTime = 0
+    window.rallyingTime = config.rallyingTime or 1
+    window.currentRallyingTime = 0
+    window.barricadeImageName = config.barricadeImageName
+    window.directionX = config.directionX or 1
+    table.insert(game.entities, window)
+    return window
+end
+
 function newZombie(game, config)
     local zombie = {}
     zombie.type = "zombie"
+    zombie.active = true
     zombie.x = config.x or 0
     zombie.y = config.y or 0
     zombie.z = config.z or 0
@@ -87,28 +127,26 @@ function newZombie(game, config)
     zombie.directionX = config.directionX or 1
     zombie.image = game.images.zombie
     zombie.state = config.state or "standing"
-    zombie.spawnTime = config.spawnTime or 1
-    zombie.currentSpawnTime = zombie.spawnTime
+    zombie.alpha = config.alpha or 255
     table.insert(game.entities, zombie)
     return zombie
 end
 
-function newWindow(game, config)
-    local window = {}
-    window.type = "window"
-    window.x = config.x or 0
-    window.y = config.y or 0
-    window.z = config.z or 0
-    window.spawnTime = config.spawnTime or 1
-    window.currentSpawnTime = window.spawnTime
-    window.barricadeImageName = config.barricadeImageName
-    table.insert(game.entities, window)
-    return window
+function updateBarricade(game, barricade)
+    barricade.destructionTime = barricade.destructionTime - game.dt
+
+    if barricade.destructionTime < 0 then
+        barricade.window.state = "producing"
+        barricade.window.currentProductionTime = 0
+        barricade.window.barricade = nil
+        barricade.window = nil
+        barricade.active = false
+    end
 end
 
-function updateFireplace(game, fireplace)
-    fireplace.particles:setPosition(fireplace.x, fireplace.y + fireplace.z)
-    fireplace.particles:update(game.dt)
+function updateFire(game, fire)
+    fire.particles:setPosition(fire.x, fire.y + fire.z)
+    fire.particles:update(game.dt)
 end
 
 function updateSurvivor(game, survivor)
@@ -133,32 +171,47 @@ function updateSurvivor(game, survivor)
 end
 
 function updateWindow(game, window)
-    if not window.barricade then
-        window.currentSpawnTime = window.currentSpawnTime - game.dt
+    if window.state == "producing" then
+        window.currentProductionTime = window.currentProductionTime - game.dt
 
-        if window.currentSpawnTime < 0 then
-            window.currentSpawnTime = window.spawnTime
-
-            newZombie(game, {
+        if window.currentProductionTime < 0 then
+            window.zombie = newZombie(game, {
                 x = window.x,
                 y = window.y,
                 z = window.z,
-                state = "spawning",
-                spawnTime = 0.5,
+                directionX = window.directionX,
+                alpha = 0,
+                state = "rallying",
             })
+
+            window.state = "rallying"
+            window.currentRallyingTime = window.rallyingTime
+        end
+    elseif window.state == "rallying" then
+        window.currentRallyingTime = window.currentRallyingTime - game.dt
+        local t1 = 1 - smoothstep(0.5 * window.rallyingTime, window.rallyingTime, window.currentRallyingTime)
+        local t2 = 1 - smoothstep(0, 0.5 * window.rallyingTime, window.currentRallyingTime)
+        window.zombie.alpha = mix(0, 255, t1)
+        window.zombie.x = mix(window.x, window.rallyingX, t2)
+        window.zombie.y = mix(window.y, window.rallyingY, t2)
+        window.zombie.z = mix(window.z, window.rallyingZ, t2)
+
+        if window.currentRallyingTime < 0 then
+            window.state = "producing"
+            window.zombie.x = window.rallyingX
+            window.zombie.y = window.rallyingY
+            window.zombie.z = window.rallyingZ
+            window.zombie.alpha = 255
+            window.zombie.state = "standing"
+            window.zombie = nil
+
+            window.state = "producing"
+            window.currentProductionTime = window.productionTime
         end
     end
 end
 
 function updateZombie(game, zombie)
-    if zombie.state == "spawning" then
-        zombie.currentSpawnTime = zombie.currentSpawnTime - game.dt
-        zombie.alpha = math.min(1 - zombie.currentSpawnTime / zombie.spawnTime, 1)
-
-        if zombie.currentSpawnTime < 0 then
-            zombie.state = "standing"
-        end
-    end
 end
 
 function updateGame(game, dt)
@@ -175,6 +228,19 @@ function updateGame(game, dt)
             end
         end
 
+        local j = 1
+
+        for i, entity in ipairs(game.entities) do
+            if entity.active then
+                game.entities[j] = entity
+                j = j + 1
+            end
+        end
+
+        while #game.entities >= j do
+            table.remove(game.entities)
+        end
+
         table.sort(game.entities, function(a, b) return a.z < b.z end)
     end
 end
@@ -187,13 +253,21 @@ function drawBarricade(game, barricade)
         0, game.imageScale, game.imageScale, 0.5 * width, 0.5 * height)
 end
 
-function drawFireplace(game, fireplace)
+function drawFire(game, fire)
     love.graphics.setBlendMode("add")
-    love.graphics.draw(fireplace.particles)
+    love.graphics.draw(fire.particles)
     love.graphics.setBlendMode("alpha")
 end
 
 function drawSurvivor(game, survivor)
+    local shadowImage = game.images.survivorShadow
+    local shadowWidth, shadowHeight = shadowImage:getDimensions()
+    local shadowY = 0
+
+    love.graphics.draw(shadowImage, survivor.x, shadowY + survivor.z, 0,
+        survivor.directionX * game.imageScale, game.imageScale,
+        0.5 * shadowWidth, 0.5 * shadowHeight)
+
     local width, height = survivor.image:getDimensions()
 
     love.graphics.draw(survivor.image, survivor.x, survivor.y + survivor.z, 0,
@@ -202,8 +276,16 @@ function drawSurvivor(game, survivor)
 end
 
 function drawZombie(game, zombie)
+    local shadowImage = game.images.zombieShadow
+    local shadowWidth, shadowHeight = shadowImage:getDimensions()
+    local shadowY = 0
+
+    love.graphics.draw(shadowImage, zombie.x, shadowY + zombie.z, 0,
+        zombie.directionX * game.imageScale, game.imageScale,
+        0.5 * shadowWidth, 0.5 * shadowHeight)
+
     local width, height = zombie.image:getDimensions()
-    love.graphics.setColor(255, 255, 255, zombie.alpha * 255)
+    love.graphics.setColor(255, 255, 255, zombie.alpha)
 
     love.graphics.draw(zombie.image, zombie.x, zombie.y + zombie.z, 0,
         zombie.directionX * game.imageScale, game.imageScale,
@@ -215,6 +297,7 @@ end
 function drawBackground(game)
     local image = game.images.background
     local width, height = image:getDimensions()
+
     love.graphics.draw(image, 0, 0, 0, game.imageScale, game.imageScale,
         0.5 * width, 0.5 * height)
 end
@@ -253,32 +336,37 @@ function love.load()
     game = newGame({
         cameraScale = 1 / 12,
         imageScale = 1 / 32,
-        x1 = -8,
+        x1 = -7.75,
         z1 = -2.5,
-        x2 = 8,
-        z2 = 6,
+        x2 = 7.75,
+        z2 = 5.75,
     })
 
-    game.updateHandlers.fireplace = updateFireplace
+    game.updateHandlers.barricade = updateBarricade
+    game.updateHandlers.fire = updateFire
     game.updateHandlers.survivor = updateSurvivor
     game.updateHandlers.zombie = updateZombie
     game.updateHandlers.window = updateWindow
+
     game.drawHandlers.barricade = drawBarricade
-    game.drawHandlers.fireplace = drawFireplace
+    game.drawHandlers.fire = drawFire
     game.drawHandlers.survivor = drawSurvivor
     game.drawHandlers.zombie = drawZombie
+
     game.images.background = loadImage("resources/images/background.png")
     game.images.fireParticle = loadImage("resources/images/fire-particle.png")
     game.images.leftBottomBarricade = loadImage("resources/images/left-bottom-barricade.png")
     game.images.leftTopBarricade = loadImage("resources/images/left-top-barricade.png")
     game.images.survivor = loadImage("resources/images/survivor.png")
+    game.images.survivorShadow = loadImage("resources/images/survivor-shadow.png")
     game.images.rightBottomBarricade = loadImage("resources/images/right-bottom-barricade.png")
     game.images.rightTopBarricade = loadImage("resources/images/right-top-barricade.png")
     game.images.topLeftBarricade = loadImage("resources/images/top-left-barricade.png")
     game.images.topRightBarricade = loadImage("resources/images/top-right-barricade.png")
     game.images.zombie = loadImage("resources/images/zombie.png")
+    game.images.zombieShadow = loadImage("resources/images/zombie-shadow.png")
 
-    newFireplace(game, {
+    newFire(game, {
         x = 0,
         y = -0.5,
         z = -3,
@@ -288,6 +376,11 @@ function love.load()
         x = -9.5,
         y = -1.5,
         z = 4.5,
+        rallyingX = -7.75,
+        rallyingY = -1,
+        rallyingZ = 4.5,
+        productionTime = 30,
+        rallyingTime = 0.75,
         barricadeImageName = "leftBottomBarricade",
     })
 
@@ -295,35 +388,63 @@ function love.load()
         x = -9.5,
         y = -1.5,
         z = 0,
+        rallyingX = -7.75,
+        rallyingY = -1,
+        rallyingZ = 0.5,
+        productionTime = 30,
+        rallyingTime = 0.75,
         barricadeImageName = "leftTopBarricade",
     })
 
     local topLeftWindow = newWindow(game, {
-        x = -6.5,
+        x = -6,
         y = -1.5,
         z = -3.5,
+        rallyingX = -5.5,
+        rallyingY = -1,
+        rallyingZ = -2.5,
+        productionTime = 30,
+        rallyingTime = 0.75,
         barricadeImageName = "topLeftBarricade",
     })
 
     local topRightWindow = newWindow(game, {
-        x = 6.5,
+        x = 6,
         y = -1.5,
         z = -3.5,
+        rallyingX = 5.5,
+        rallyingY = -1,
+        rallyingZ = -2.5,
         barricadeImageName = "topRightBarricade",
+        directionX = -1,
+        productionTime = 30,
+        rallyingTime = 0.75,
     })
 
     local rightTopWindow = newWindow(game, {
         x = 9.5,
         y = -1.5,
         z = 0,
+        rallyingX = 7.75,
+        rallyingY = -1,
+        rallyingZ = 0.5,
         barricadeImageName = "rightTopBarricade",
+        directionX = -1,
+        productionTime = 30,
+        rallyingTime = 0.75,
     })
 
     local rightBottomWindow = newWindow(game, {
         x = 9.5,
         y = -1.5,
         z = 4.5,
+        rallyingX = 7.75,
+        rallyingY = -1,
+        rallyingZ = 4.5,
         barricadeImageName = "rightBottomBarricade",
+        directionX = -1,
+        productionTime = 30,
+        rallyingTime = 0.75,
     })
 
     newBarricade(leftBottomWindow, {})
