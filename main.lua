@@ -8,7 +8,32 @@ function newGame(config)
     game.entities = {}
     game.images = {}
     game.updateHandlers = {}
+    game.drawHandlers = {}
     return game
+end
+
+function newFireplace(game, config)
+    local fireplace = {}
+    fireplace.type = "fireplace"
+    fireplace.x = config.x or 0
+    fireplace.y = config.y or 0
+    fireplace.z = config.z or 0
+
+    fireplace.particles =
+        love.graphics.newParticleSystem(game.images.fireParticle, 256)
+
+    fireplace.particles:setParticleLifetime(0.25, 0.5)
+    fireplace.particles:setEmissionRate(256)
+    fireplace.particles:setSizes(game.imageScale)
+    fireplace.particles:setAreaSpread("normal", 1 / 4, 1 / 8)
+    fireplace.particles:setLinearAcceleration(0, -8)
+    fireplace.particles:setLinearDamping(2)
+    fireplace.particles:setColors(
+        255, 127, 63, 255,
+        127, 63, 0, 255,
+        63, 0, 0, 255)
+    table.insert(game.entities, fireplace)
+    return fireplace
 end
 
 function newSurvivor(game, config)
@@ -46,6 +71,23 @@ function newZombie(game, config)
     return zombie
 end
 
+function newWindow(game, config)
+    local window = {}
+    window.type = "window"
+    window.x = config.x or 0
+    window.y = config.y or 0
+    window.z = config.z or 0
+    window.spawnTime = config.spawnTime or 1
+    window.currentSpawnTime = window.spawnTime
+    table.insert(game.entities, window)
+    return window
+end
+
+function updateFireplace(game, fireplace)
+    fireplace.particles:setPosition(fireplace.x, fireplace.y + fireplace.z)
+    fireplace.particles:update(game.dt)
+end
+
 function updateSurvivor(game, survivor)
     local leftInput = love.keyboard.isDown(survivor.leftKey)
     local rightInput = love.keyboard.isDown(survivor.rightKey)
@@ -60,6 +102,20 @@ function updateSurvivor(game, survivor)
 
     survivor.x = survivor.x + inputX * survivor.walkingSpeed * game.dt
     survivor.z = survivor.z + inputZ * survivor.walkingSpeed * game.dt
+end
+
+function updateWindow(game, window)
+    window.currentSpawnTime = window.currentSpawnTime - game.dt
+
+    if window.currentSpawnTime < 0 then
+        window.currentSpawnTime = window.spawnTime
+
+        newZombie(game, {
+            x = window.x,
+            y = window.y,
+            z = window.z,
+        })
+    end
 end
 
 function updateZombie(game, zombie)
@@ -83,11 +139,26 @@ function updateGame(game, dt)
     end
 end
 
-function drawEntity(game, entity)
-    local width, height = entity.image:getDimensions()
+function drawFireplace(game, fireplace)
+    love.graphics.setBlendMode("add")
+    love.graphics.draw(fireplace.particles)
+    love.graphics.setBlendMode("alpha")
+end
 
-    love.graphics.draw(entity.image, entity.x, entity.y + entity.z, 0,
-        entity.directionX * game.imageScale, game.imageScale, 0.5 * width, 0.5 * height)
+function drawSurvivor(game, survivor)
+    local width, height = survivor.image:getDimensions()
+
+    love.graphics.draw(survivor.image, survivor.x, survivor.y + survivor.z, 0,
+        survivor.directionX * game.imageScale, game.imageScale,
+        0.5 * width, 0.5 * height)
+end
+
+function drawZombie(game, zombie)
+    local width, height = zombie.image:getDimensions()
+
+    love.graphics.draw(zombie.image, zombie.x, zombie.y + zombie.z, 0,
+        zombie.directionX * game.imageScale, game.imageScale,
+        0.5 * width, 0.5 * height)
 end
 
 function drawBackground(game)
@@ -106,7 +177,11 @@ function drawGame(game)
     drawBackground(game)
 
     for i, entity in ipairs(game.entities) do
-        drawEntity(game, entity)
+        local handler = game.drawHandlers[entity.type]
+
+        if handler then
+            handler(game, entity)
+        end
     end
 
     love.graphics.pop()
@@ -129,17 +204,63 @@ function love.load()
         imageScale = 1 / 32,
     })
 
+    game.updateHandlers.fireplace = updateFireplace
     game.updateHandlers.survivor = updateSurvivor
     game.updateHandlers.zombie = updateZombie
+    game.updateHandlers.window = updateWindow
+    game.drawHandlers.fireplace = drawFireplace
+    game.drawHandlers.survivor = drawSurvivor
+    game.drawHandlers.zombie = drawZombie
     game.images.background = loadImage("resources/images/background.png")
+    game.images.fireParticle = loadImage("resources/images/fire-particle.png")
     game.images.survivor = loadImage("resources/images/survivor.png")
     game.images.zombie = loadImage("resources/images/zombie.png")
-    
-    newSurvivor(game, {
-        walkingSpeed = 2,
+
+    newFireplace(game, {
+        x = 0,
+        y = -0.5,
+        z = -3,
     })
-    
-    newZombie(game, {})
+
+    newWindow(game, {
+        x = -9.5,
+        y = -1.5,
+        z = 4.5,
+    })
+
+    newWindow(game, {
+        x = -9.5,
+        y = -1.5,
+        z = 0,
+    })
+
+    newWindow(game, {
+        x = -6.5,
+        y = -1.5,
+        z = -3.5,
+    })
+
+    newWindow(game, {
+        x = 6.5,
+        y = -1.5,
+        z = -3.5,
+    })
+
+    newWindow(game, {
+        x = 9.5,
+        y = -1.5,
+        z = 0,
+    })
+
+    newWindow(game, {
+        x = 9.5,
+        y = -1.5,
+        z = 4.5,
+    })
+
+    newSurvivor(game, {
+        walkingSpeed = 6,
+    })
 end
 
 function love.update(dt)
