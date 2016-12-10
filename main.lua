@@ -79,9 +79,8 @@ function newSurvivor(game, config)
     survivor.x = config.x or 0
     survivor.y = config.y or 0
     survivor.z = config.z or 0
-    survivor.width = config.width or 1
+    survivor.radius = config.radius or 1
     survivor.height = config.height or 1
-    survivor.depth = config.depth or 1
     survivor.directionX = config.directionX or 1
     survivor.image = game.images.survivor
     survivor.leftKey = config.leftKey or "a"
@@ -121,15 +120,37 @@ function newZombie(game, config)
     zombie.x = config.x or 0
     zombie.y = config.y or 0
     zombie.z = config.z or 0
-    zombie.width = config.width or 1
+    zombie.radius = config.radius or 1
     zombie.height = config.height or 1
-    zombie.depth = config.depth or 1
     zombie.directionX = config.directionX or 1
     zombie.image = game.images.zombie
     zombie.state = config.state or "standing"
     zombie.alpha = config.alpha or 255
     table.insert(game.entities, zombie)
     return zombie
+end
+
+function resolveBounds(game, entity)
+    entity.x = math.max(entity.x, game.x1)
+    entity.x = math.min(entity.x, game.x2)
+    entity.z = math.max(entity.z, game.z1)
+    entity.z = math.min(entity.z, game.z2)
+end
+
+function resolveCollisions(game, entity)
+    for i, other in ipairs(game.entities) do
+        if other ~= entity and (other.type == "survivor" or other.type == "zombie") then
+            local squaredDistance = (other.x - entity.x) ^ 2 + (other.z - entity.z) ^ 2
+
+            if squaredDistance < (entity.radius + other.radius) ^ 2 then
+                local distance = math.sqrt(squaredDistance)
+                local directionX = (other.x - entity.x) / distance
+                local directionZ = (other.z - entity.z) / distance
+                entity.x = other.x - directionX * (entity.radius + other.radius)
+                entity.z = other.z - directionZ * (entity.radius + other.radius)
+            end
+        end
+    end
 end
 
 function updateBarricade(game, barricade)
@@ -164,10 +185,9 @@ function updateSurvivor(game, survivor)
     survivor.x = survivor.x + inputX * survivor.walkingSpeed * game.dt
     survivor.z = survivor.z + inputZ * survivor.walkingSpeed * game.dt
 
-    survivor.x = math.max(survivor.x, game.x1)
-    survivor.x = math.min(survivor.x, game.x2)
-    survivor.z = math.max(survivor.z, game.z1)
-    survivor.z = math.min(survivor.z, game.z2)
+    resolveBounds(game, survivor)
+    resolveCollisions(game, survivor)
+    resolveBounds(game, survivor)
 end
 
 function updateWindow(game, window)
@@ -179,6 +199,8 @@ function updateWindow(game, window)
                 x = window.x,
                 y = window.y,
                 z = window.z,
+                height = 1.75,
+                radius = 0.5,
                 directionX = window.directionX,
                 alpha = 0,
                 state = "rallying",
@@ -212,6 +234,11 @@ function updateWindow(game, window)
 end
 
 function updateZombie(game, zombie)
+    if zombie.state == "standing" then
+        resolveBounds(game, zombie)
+        resolveCollisions(game, zombie)
+        resolveBounds(game, zombie)
+    end
 end
 
 function updateGame(game, dt)
@@ -377,7 +404,7 @@ function love.load()
         y = -1.5,
         z = 4.5,
         rallyingX = -7.75,
-        rallyingY = -1,
+        rallyingY = -0.875,
         rallyingZ = 4.5,
         productionTime = 30,
         rallyingTime = 0.75,
@@ -389,7 +416,7 @@ function love.load()
         y = -1.5,
         z = 0,
         rallyingX = -7.75,
-        rallyingY = -1,
+        rallyingY = -0.875,
         rallyingZ = 0.5,
         productionTime = 30,
         rallyingTime = 0.75,
@@ -401,7 +428,7 @@ function love.load()
         y = -1.5,
         z = -3.5,
         rallyingX = -5.5,
-        rallyingY = -1,
+        rallyingY = -0.875,
         rallyingZ = -2.5,
         productionTime = 30,
         rallyingTime = 0.75,
@@ -413,7 +440,7 @@ function love.load()
         y = -1.5,
         z = -3.5,
         rallyingX = 5.5,
-        rallyingY = -1,
+        rallyingY = -0.875,
         rallyingZ = -2.5,
         barricadeImageName = "topRightBarricade",
         directionX = -1,
@@ -426,7 +453,7 @@ function love.load()
         y = -1.5,
         z = 0,
         rallyingX = 7.75,
-        rallyingY = -1,
+        rallyingY = -0.875,
         rallyingZ = 0.5,
         barricadeImageName = "rightTopBarricade",
         directionX = -1,
@@ -439,7 +466,7 @@ function love.load()
         y = -1.5,
         z = 4.5,
         rallyingX = 7.75,
-        rallyingY = -1,
+        rallyingY = -0.875,
         rallyingZ = 4.5,
         barricadeImageName = "rightBottomBarricade",
         directionX = -1,
@@ -455,7 +482,9 @@ function love.load()
     newBarricade(rightBottomWindow, {})
 
     newSurvivor(game, {
-        y = -1,
+        y = -0.875,
+        height = 1.75,
+        radius = 0.5,
         walkingSpeed = 6,
     })
 end
