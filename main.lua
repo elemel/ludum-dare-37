@@ -14,12 +14,14 @@ end
 function newGame(config)
     local game = {}
     game.aspectRatio = config.aspectRatio or 16 / 9
+    game.time = 0
     game.dt = config.dt or 1 / 60
     game.pendingDt = 0
     game.cameraScale = config.cameraScale or 1
     game.imageScale = config.imageScale or 1
     game.entities = {}
     game.images = {}
+    game.animations = {}
     game.updateHandlers = {}
     game.drawHandlers = {}
     game.x1 = config.x1 or -1
@@ -126,6 +128,9 @@ function newZombie(game, config)
     zombie.image = game.images.zombie
     zombie.state = config.state or "standing"
     zombie.alpha = config.alpha or 255
+    zombie.walkingSpeed = config.walkingSpeed or 1
+    zombie.animationTime = 0
+    zombie.animationSpeed = 2
     table.insert(game.entities, zombie)
     return zombie
 end
@@ -178,14 +183,20 @@ function updateSurvivor(game, survivor)
     local inputX = (rightInput and 1 or 0) - (leftInput and 1 or 0)
     local inputZ = (downInput and 1 or 0) - (upInput and 1 or 0)
 
-    if inputX ~= 0 then
-        survivor.directionX = inputX
+    local inputLength = math.sqrt(inputX ^ 2 + inputZ ^ 2)
+
+    if inputLength > 1 then
+        inputX = inputX / inputLength
+        inputZ = inputZ / inputLength
+    end
+
+    if math.abs(inputX) > 0.001 then
+        survivor.directionX = (inputX < 0) and -1 or 1
     end
 
     survivor.x = survivor.x + inputX * survivor.walkingSpeed * game.dt
     survivor.z = survivor.z + inputZ * survivor.walkingSpeed * game.dt
 
-    resolveBounds(game, survivor)
     resolveCollisions(game, survivor)
     resolveBounds(game, survivor)
 end
@@ -233,11 +244,50 @@ function updateWindow(game, window)
     end
 end
 
+function findNearestSurvivor(game, zombie)
+    local survivor = nil
+    local minSquaredDistance = math.huge
+
+    for i, entity in ipairs(game.entities) do
+        if entity.type == "survivor" then
+            local squaredDistance = (entity.x - zombie.x) ^ 2 + (entity.z - zombie.z) ^ 2
+
+            if squaredDistance < minSquaredDistance then
+                survivor = entity
+                minSquaredDistance = squaredDistance
+            end
+        end
+    end
+
+    return survivor
+end
+
 function updateZombie(game, zombie)
     if zombie.state == "standing" then
-        resolveBounds(game, zombie)
+        local survivor = findNearestSurvivor(game, zombie)
+
+        if survivor then
+            local offsetX = survivor.x - zombie.x
+            local offsetZ = survivor.z - zombie.z
+            local offsetLength = math.sqrt(offsetX ^ 2 + offsetZ ^ 2)
+            local inputX = offsetX / offsetLength
+            local inputZ = offsetZ / offsetLength
+
+            if math.abs(inputX) > 0.001 then
+                zombie.directionX = (inputX < 0) and -1 or 1
+            end
+
+            zombie.x = zombie.x + inputX * zombie.walkingSpeed * game.dt
+            zombie.z = zombie.z + inputZ * zombie.walkingSpeed * game.dt
+        end
+
         resolveCollisions(game, zombie)
         resolveBounds(game, zombie)
+
+        zombie.animationTime = zombie.animationTime + zombie.animationSpeed * game.dt
+        local animation = game.animations.zombieStanding
+        local imageIndex = 1 + math.floor(zombie.animationTime) % #animation
+        zombie.image = animation[imageIndex]
     end
 end
 
@@ -246,6 +296,7 @@ function updateGame(game, dt)
 
     if game.pendingDt > game.dt then
         game.pendingDt = game.pendingDt - game.dt
+        game.time = game.time + game.dt
 
         for i, entity in ipairs(game.entities) do
             local handler = game.updateHandlers[entity.type]
@@ -259,6 +310,7 @@ function updateGame(game, dt)
 
         for i, entity in ipairs(game.entities) do
             if entity.active then
+                entity.index = j
                 game.entities[j] = entity
                 j = j + 1
             end
@@ -268,7 +320,7 @@ function updateGame(game, dt)
             table.remove(game.entities)
         end
 
-        table.sort(game.entities, function(a, b) return a.z < b.z end)
+        table.sort(game.entities, function(a, b) return a.z + 0.001 * a.index < b.z + 0.001 * b.index end)
     end
 end
 
@@ -358,6 +410,7 @@ function love.load()
     love.window.setMode(800, 600, {
         fullscreentype = "desktop",
         resizable = true,
+        fullscreen = true,
     })
 
     game = newGame({
@@ -392,6 +445,13 @@ function love.load()
     game.images.topRightBarricade = loadImage("resources/images/top-right-barricade.png")
     game.images.zombie = loadImage("resources/images/zombie.png")
     game.images.zombieShadow = loadImage("resources/images/zombie-shadow.png")
+    game.images.zombieStanding1 = loadImage("resources/images/zombie-standing-1.png")
+    game.images.zombieStanding2 = loadImage("resources/images/zombie-standing-2.png")
+
+    game.animations.zombieStanding = {
+        game.images.zombieStanding1,
+        game.images.zombieStanding2,
+    }
 
     newFire(game, {
         x = 0,
@@ -406,7 +466,7 @@ function love.load()
         rallyingX = -7.75,
         rallyingY = -0.875,
         rallyingZ = 4.5,
-        productionTime = 30,
+        productionTime = 1,
         rallyingTime = 0.75,
         barricadeImageName = "leftBottomBarricade",
     })
@@ -418,7 +478,7 @@ function love.load()
         rallyingX = -7.75,
         rallyingY = -0.875,
         rallyingZ = 0.5,
-        productionTime = 30,
+        productionTime = 1,
         rallyingTime = 0.75,
         barricadeImageName = "leftTopBarricade",
     })
@@ -430,7 +490,7 @@ function love.load()
         rallyingX = -5.5,
         rallyingY = -0.875,
         rallyingZ = -2.5,
-        productionTime = 30,
+        productionTime = 1,
         rallyingTime = 0.75,
         barricadeImageName = "topLeftBarricade",
     })
@@ -444,7 +504,7 @@ function love.load()
         rallyingZ = -2.5,
         barricadeImageName = "topRightBarricade",
         directionX = -1,
-        productionTime = 30,
+        productionTime = 1,
         rallyingTime = 0.75,
     })
 
@@ -457,7 +517,7 @@ function love.load()
         rallyingZ = 0.5,
         barricadeImageName = "rightTopBarricade",
         directionX = -1,
-        productionTime = 30,
+        productionTime = 1,
         rallyingTime = 0.75,
     })
 
@@ -470,7 +530,7 @@ function love.load()
         rallyingZ = 4.5,
         barricadeImageName = "rightBottomBarricade",
         directionX = -1,
-        productionTime = 30,
+        productionTime = 1,
         rallyingTime = 0.75,
     })
 
